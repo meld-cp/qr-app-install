@@ -275,7 +275,7 @@ class _MainPageState extends State<MainPage> {
       
       if ( kDebugMode && url == _kSimulateScanUrl ){
         // actual url to download
-        url = 'https://10.0.16.43:5999/files/23.11.89.3777-app-x86_64-release.apk';
+        url = 'https://10.0.16.43:5999/files/app-release.apk';
       }
 
       await dio.download(
