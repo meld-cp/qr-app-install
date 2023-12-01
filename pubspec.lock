@@ -141,18 +141,18 @@ packages:
     dependency: "direct main"
     description:
       name: dio
-      sha256: "01870acd87986f768e0c09cc4d7a19a59d814af7b34cbeb0b437d2c33bdfea4c"
+      sha256: "797e1e341c3dd2f69f2dad42564a6feff3bfb87187d05abb93b9609e6f1645c3"
       url: "https://pub.dev"
     source: hosted
-    version: "5.3.4"
+    version: "5.4.0"
   dio_http2_adapter:
     dependency: "direct main"
     description:
       name: dio_http2_adapter
-      sha256: "505ed47b1508122dbd3e351630030e5845bb292fe14fc8df4251a78b0c1a73b9"
+      sha256: "3bb35e81eb8a688eb1cb15beb97f46823698b44037e7b55227aa1060f5593adc"
       url: "https://pub.dev"
     source: hosted
-    version: "2.3.2"
+    version: "2.4.0"
   fake_async:
     dependency: transitive
     description:
