@@ -16,7 +16,6 @@ class AppRoot extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'QR App Installer',
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed( seedColor: Colors.black ),
         useMaterial3: true,
       ),
       home: const MainPage(title: 'QR App Installer'),

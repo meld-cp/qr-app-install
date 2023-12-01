@@ -63,15 +63,11 @@ class _MainPageState extends State<MainPage> {
   @override
   void initState() {
     super.initState();
-    _switchToState( _State.init, '' );
-    unawaited( _performInitState() );
+    unawaited( _switchToState( _State.init, '' ) );
   }
 
   Future<void> _switchToState( _State newState, String error ) async {
-
-    if ( _state == newState ){
-      return;
-    }
+    debugPrint( 'switchToState: $newState, $error');
 
     setState(() {
       _error = error;
@@ -113,8 +109,13 @@ class _MainPageState extends State<MainPage> {
       _busyProgress = null;
       _message = 'Initialising...';
     });
-    await _updateDeviceInfo();
-    await _updatePermissionStatus();
+
+    final deviceInfo = DeviceInfoPlugin();
+    androidInfo = await deviceInfo.androidInfo;
+
+    for (var p in _requiredPermissions) {
+      _permissionStatuses[p] = await p.status;
+    }
 
     if (_permissionsRequired){
       await _switchToState( _State.requestPermissions, '' );
@@ -128,6 +129,9 @@ class _MainPageState extends State<MainPage> {
     setState(() {
       _isBusy = false;
       _busyProgress = null;
+      _cancelBusyActionFunction = null;
+      _downloadedFilePath = null;
+      _downloadUrl = null;
       _message = 'Scan a QR code to install an app.';
     });
 
@@ -142,6 +146,8 @@ class _MainPageState extends State<MainPage> {
 
     final result = await BarcodeScanner.scan();
 
+    debugPrint( 'scan result: ${result.type}, ${result.rawContent}' );
+
     setState(() {
       _isBusy = true;
       _busyProgress = null;
@@ -152,16 +158,16 @@ class _MainPageState extends State<MainPage> {
 
       case ResultType.Barcode:
         _downloadUrl = result.rawContent;
-        _switchToState( _State.downloading, '' );
+        await _switchToState( _State.downloading, '' );
         return;
 
       case ResultType.Cancelled:
         if ( kDebugMode && const bool.fromEnvironment('SIMULATE_SCAN', defaultValue: false) ){
           // debug and emulator
           _downloadUrl = _kSimulateScanUrl;
-          _switchToState( _State.downloading, '' );
+          await _switchToState( _State.downloading, '' );
         }else{
-          _switchToState( _State.waitForScan, '' );
+          await _switchToState( _State.waitForScan, '' );
         }
         return;
 
@@ -170,7 +176,7 @@ class _MainPageState extends State<MainPage> {
           _isBusy = false;
           _downloadUrl = null;
         });
-        _switchToState( _State.waitForScan, 'Barcode scan error' );
+        await _switchToState( _State.waitForScan, 'Barcode scan error' );
         return;
 
     }
@@ -181,15 +187,10 @@ class _MainPageState extends State<MainPage> {
       _isBusy = true;
       _busyProgress = null;
       _cancelBusyActionFunction = null;
-      _message = 'Downloading...';
+      _message = 'Connecting...';
     });
-    
+
     if (_downloadUrl == null ){
-      setState(() {
-        _isBusy = false;
-        _busyProgress = null;
-        _cancelBusyActionFunction = null;
-      });
       await _switchToState( _State.waitForScan, 'Invalid download URL' );
       return;
     }
@@ -200,11 +201,6 @@ class _MainPageState extends State<MainPage> {
     final Directory? downloadDir = await getDownloadsDirectory();
 
     if ( downloadDir == null ){
-      setState(() {
-        _isBusy = false;
-        _busyProgress = null;
-        _cancelBusyActionFunction = null;
-      });
       await _switchToState( _State.waitForScan, 'Unable to get download directory' );
       return;
     }
@@ -230,17 +226,14 @@ class _MainPageState extends State<MainPage> {
     
       final downloadCancelToken = CancelToken();
       setState(() {
-        _cancelBusyActionFunction = () {
-          downloadCancelToken.cancel();
-          setState(() {
-            _cancelBusyActionFunction = null;
-          });
-        };
+        _cancelBusyActionFunction = () => downloadCancelToken.cancel();
       });
+
+      debugPrint( 'downloading: "$_downloadUrl" => "$url" => "$_downloadedFilePath"' );
 
       DateTime? lastProgressUpdate;
 
-      final res = await dio.download(
+      await dio.download(
         url,
         _downloadedFilePath,
         cancelToken: downloadCancelToken,
@@ -251,36 +244,27 @@ class _MainPageState extends State<MainPage> {
           final now = DateTime.now();
           if ( lastProgressUpdate == null || now.difference(lastProgressUpdate!).inMilliseconds > 100 ){
             lastProgressUpdate = now;
-            setState(() {});
+            setState(() {
+              _message = 'Downloading...';
+            });
           }
 
         },
         
       );
 
-      debugPrint(res.toString());
+      await _switchToState( _State.installing, '' );
+
 
     }on DioException catch (e){
       
       switch( e.type ){
         
         case DioExceptionType.connectionTimeout:
-          setState(() {
-            _isBusy = false;
-            _cancelBusyActionFunction = null;
-            _busyProgress = null;
-            _downloadUrl = null;
-          });
           await _switchToState( _State.waitForScan, 'Connection timeout' );
         return;
         
         case DioExceptionType.cancel:
-          setState(() {
-            _isBusy = false;
-            _cancelBusyActionFunction = null;
-            _busyProgress = null;
-            _downloadUrl = null;
-          });
           await _switchToState( _State.waitForScan, 'Download cancelled' );
         return;
 
@@ -300,7 +284,7 @@ class _MainPageState extends State<MainPage> {
       _message = 'Installing...';
     });
     
-    if ( _downloadedFilePath == null || !await File(_downloadUrl!).exists() ){
+    if ( _downloadedFilePath == null || !await File(_downloadedFilePath!).exists() ){
       setState(() {
         _isBusy = false;
         _busyProgress = null;
@@ -354,11 +338,11 @@ class _MainPageState extends State<MainPage> {
                   alignment: Alignment.center,
                   children: [
                     if (_isBusy)
-                      const SizedBox(
+                      SizedBox(
                         width: 180,
                         height: 180,
                         child: CircularProgressIndicator(
-                          value: null,
+                          value: _busyProgress,
                           strokeWidth: 8,
                           strokeCap: StrokeCap.round,
                         )
@@ -367,7 +351,7 @@ class _MainPageState extends State<MainPage> {
                     const Icon(Icons.qr_code_2, size: 128, color: Colors.black12),
                     Column(
                       children: [
-                        if ( _busyProgress != null )
+                        if ( _isBusy && _busyProgress != null )
                           Text(
                             '${(_busyProgress! * 100.0 ).toStringAsFixed(1)}%',
                             textAlign: TextAlign.center,
@@ -375,10 +359,13 @@ class _MainPageState extends State<MainPage> {
                           )
                         ,
                         if ( _cancelBusyActionFunction != null )
-                          OutlinedButton(
-                            onPressed: _cancelBusyActionFunction,
-                            style: const ButtonStyle(visualDensity: VisualDensity.compact),
-                            child: const Text('Cancel'),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(vertical: 4),
+                            child: ElevatedButton(
+                              onPressed: _cancelBusyActionFunction,
+                              style: const ButtonStyle(visualDensity: VisualDensity.compact,),
+                              child: const Text('Cancel'),
+                            ),
                           )
                         ,
                       ],
@@ -413,7 +400,7 @@ class _MainPageState extends State<MainPage> {
               
               else if ( _state == _State.waitForScan )
                 ElevatedButton(
-                  onPressed: () => _switchToState( _State.processScan, '' ),
+                  onPressed: () async => await _switchToState( _State.processScan, '' ),
                   child: const Text( 'Scan QR code' )
                 )
               ,
@@ -421,63 +408,11 @@ class _MainPageState extends State<MainPage> {
               if ( _downloadUrl != null )
                 Text( '$_downloadUrl', textAlign: TextAlign.center )
               ,
-        
-              // if ( _busyProgress != null )
-              //   Stack(
-              //     alignment: Alignment.center,
-              //     children: [
-              //       SizedBox(
-              //         width: 200,
-              //         height: 200,
-              //         child: CircularProgressIndicator(
-              //           value: _busyProgress,
-              //           strokeWidth: 8,
-              //           strokeCap: StrokeCap.round,
-              //         )
-              //       ),
-              //       Column(
-              //         children: [
-              //           const SizedBox( height: 4, ),
-              //           Text(
-              //             '${(_busyProgress! * 100.0 ).toStringAsFixed(1)}%',
-              //             textAlign: TextAlign.center,
-              //             style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 24),
-              //           ),
-              //           const SizedBox( height: 8, ),
-              //           OutlinedButton(
-              //             onPressed: _cancelBusyActionFunction,
-              //             style: const ButtonStyle(visualDensity: VisualDensity.compact),
-              //             child: const Text('Cancel'),
-              //           )
-              //         ],
-              //       ),
-              //     ]
-              //   )
-              // ,
-              // Text(
-              //   '',
-              //   style: Theme.of(context).textTheme.headlineMedium,
-              // ),
-            ],
+             ],
           ),
         ),
       ),
-      // floatingActionButton: FloatingActionButton(
-      //   onPressed: _incrementCounter,
-      //   tooltip: 'Increment',
-      //   child: const Icon(Icons.add),
-      // ),
     );
-  }
-  
-  Future<void> _updatePermissionStatus() async {
-
-    for (var p in _requiredPermissions) {
-      _permissionStatuses[p] = await p.status;
-    }
-
-    setState(() {});
-
   }
   
   Future<void> _requestPermissions() async {
@@ -490,208 +425,14 @@ class _MainPageState extends State<MainPage> {
       _permissionStatuses[p] = await p.status;
     }
 
-    //_permissionStatuses = await _requiredPermissions.request();
-    //debugPrint( _permissionStatuses.toString() );
     setState(() { });
   }
 
-  // Future<void> _scanBarcodeDownloadAndInstall() async {
-
-  //   final result = await BarcodeScanner.scan();
-
-  //   debugPrint(result.type.toString()); // The result type (barcode, cancelled, failed)
-  //   debugPrint(result.rawContent); // The barcode content
-  //   debugPrint(result.format.toString()); // The barcode format (as enum)
-  //   debugPrint(result.formatNote); // If a unknown format was scanned this field contains a note
-
-
-  //   String? url;
-    
-  //   switch ( result.type ){
-
-  //     case ResultType.Barcode:
-  //       url = result.rawContent;
-  //       break;
-
-  //     case ResultType.Cancelled:
-  //       setState(() { _status = ''; });
-  //       break;
-
-  //     case ResultType.Error:
-  //       setState(() { _status = 'Barcode scan error'; });
-  //       return;
-
-  //   }
-
-  //   if ( url == null && kDebugMode && const bool.fromEnvironment('SIMULATE_SCAN', defaultValue: false) ){
-  //     // debug and emulator
-  //     url = _kSimulateScanUrl;
-  //   }
-
-  //   if ( url == null ){
-  //     return;
-  //   }
-
-  //   url = _buildFinalDownloadUrl( url );
-
-  //   // download
-  //   final Directory? downloadDir = await getDownloadsDirectory();
-
-  //   if (downloadDir == null){
-  //     setState(() {
-  //       _isBusy = false;
-  //       _status = 'Unable to get download dir';
-  //     });
-
-  //     return;
-  //   }
-    
-  //   if ( !await downloadDir.exists() ){
-  //     await downloadDir.create( recursive: true );
-  //   }
-
-  //   final filePath = '${downloadDir.path}/app.apk';
-
-  //   final wasDownloaded = await download( url, filePath );
-
-  //   setState(() {
-  //     _downloadCancelToken = null;
-  //     _busyProgress = null;
-  //   });
-
-  //   if (!wasDownloaded){
-  //     return;
-  //   }
-
-  //   setState(() {
-  //     _status = 'Installing...';
-  //   });
-
-    
-  //   final res = await InstallPlugin.installApk(filePath, appId );
-    
-  //   debugPrint( 'Install result: $res');
-
-  //   setState(() {
-  //     if (res == 'Success'){
-  //       _status = '';
-  //     }else{
-  //       _status = 'Install failed: $res';
-  //     }
-  //   });
-
-  // }
-
-
-  // Future<bool> download( String url, String toPath ) async{
-
-  //   setState(() {
-  //     _status = 'Downloading...';
-  //     _downloadUrl = url;
-  //   });
-
-  //   try{
-
-  //     final dio = Dio()
-  //       ..options.connectTimeout = const Duration(seconds: 30)
-  //       ..options.receiveTimeout = const Duration(seconds: 30)
-  //       ..httpClientAdapter = Http2Adapter(ConnectionManager(
-  //         idleTimeout: const Duration(seconds: 15),
-  //         onClientCreate: (_, config) => config.onBadCertificate = (_) => true,
-  //       ))
-  //     ;
-      
-  //     DateTime? lastUpdate;
-    
-  //     _downloadCancelToken = CancelToken();
-      
-  //     if ( kDebugMode && url == _kSimulateScanUrl ){
-  //       // actual url to download
-  //       url = 'https://10.0.16.43:5999/files/app-release.apk';
-  //     }
-
-  //     final res = await dio.download(
-  //       url,
-  //       toPath,
-  //       cancelToken: _downloadCancelToken,
-  //       onReceiveProgress: (received, total) {
-          
-  //         _busyProgress = total > 0 ? received/total : 0;
-
-  //         final now = DateTime.now();
-  //         if ( lastUpdate == null || now.difference(lastUpdate!).inMilliseconds > 100 ){
-  //           lastUpdate = now;
-  //           setState(() {});
-  //         }
-
-  //       },
-        
-  //     );
-
-  //     debugPrint(res.toString());
-
-  //     return true;
-
-
-  //   }on DioException catch (e){
-      
-  //     switch( e.type ){
-        
-  //       case DioExceptionType.connectionTimeout:
-  //         setState(() {
-  //           _status = "Connection timeout";
-  //           _downloadCancelToken = null;
-  //           _busyProgress = null;
-  //           _downloadUrl = null;
-  //         });
-  //       break;
-        
-  //       case DioExceptionType.cancel:
-  //         setState(() {
-  //           _status = "Download cancelled";
-  //           _downloadCancelToken = null;
-  //           _busyProgress = null;
-  //           _downloadUrl = null;
-  //         });
-  //       break;
-
-  //       default:
-  //         debugPrint( e.toString() );
-  //       break;
-  //     }
-
-  //     // if ( e.type == DioExceptionType.cancel ) {
-  //     //   setState(() {
-  //     //     _status = "Download cancelled";
-  //     //     _downloadCancelToken = null;
-  //     //     _downloadProgress = null;
-  //     //     _downloadUrl = null;
-  //     //   });
-  //     // }else{
-  //     //   debugPrint( e.toString() );
-  //     // }
-
-  //     return false;
-
-  //   }
-  // }
-
-  // void _cancelDownload() {
-  //   _downloadCancelToken?.cancel();
-  // }
-  
-  Future<void> _updateDeviceInfo() async {
-
-    final deviceInfo = DeviceInfoPlugin();
-    androidInfo = await deviceInfo.androidInfo;
-    
-    setState(() {});
-
-  }
   
   String _buildFinalDownloadUrl(String url) {
     if ( url == _kSimulateScanUrl ){
-      return 'https://10.0.16.43:5999/files/app-release.apk';
+      debugPrint('simulate scan');
+      url = 'https://github.com/meld-cp/qr-app-install/raw/dev/test/assets/app-{abi}-release.apk';
     }
     return url.replaceAll(
       RegExp('{abi}', caseSensitive: false),
