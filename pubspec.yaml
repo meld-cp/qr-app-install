@@ -29,6 +29,7 @@ environment:
 # versions available, run `flutter pub outdated`.
 dependencies:
   barcode_scan2: ^4.3.0
+  device_info_plus: ^9.1.1
   dio: ^5.3.4
   dio_http2_adapter: ^2.3.2
   install_plugin_v2: ^1.0.0
