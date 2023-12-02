@@ -13,6 +13,7 @@ import 'package:permission_handler/permission_handler.dart';
 
 enum _State{
   init,
+  permissionNeeded,
   requestPermissions,
   waitForScan,
   processScan,
@@ -29,6 +30,29 @@ class MainPage extends StatefulWidget {
   State<MainPage> createState() => _MainPageState();
 }
 
+class _PermissionRequirement{
+  final Permission permission;
+  final String name;
+  final String reason;
+  PermissionStatus? status;
+
+  _PermissionRequirement({
+    required this.permission,
+    required this.name,
+    required this.reason  
+  });
+
+  Future<PermissionStatus> refreshStatus() async {
+    status = await permission.status;
+    return status!;
+  }
+  
+  Future<PermissionStatus> request() async {
+    status = await permission.request();
+    return status!;
+  }
+}
+
 class _MainPageState extends State<MainPage> {
   
   static const appId = 'nz.co.meld.qrappinstaller';
@@ -39,15 +63,21 @@ class _MainPageState extends State<MainPage> {
   AndroidDeviceInfo? androidInfo;
 
   final _requiredPermissions = [
-    Permission.camera,
-    Permission.requestInstallPackages
+    _PermissionRequirement(
+      permission: Permission.camera,
+      name: 'Camera',
+      reason: 'To scan the QR code using the camera'
+    ),
+    _PermissionRequirement(
+      permission: Permission.requestInstallPackages,
+      name: 'Request Install Packages',
+      reason: 'To request install of download application'
+    ),
   ];
   
-  final Map<Permission, PermissionStatus> _permissionStatuses = {};
-
   bool get _permissionsRequired =>
-    ( _permissionStatuses.isEmpty && _requiredPermissions.isNotEmpty )
-    || _permissionStatuses.values.any( (x) => !x.isGranted )
+    ( _requiredPermissions.isEmpty )
+    || _requiredPermissions.any( (x) => x.status?.isGranted != true )
   ;
 
   String _error = '';
@@ -81,7 +111,12 @@ class _MainPageState extends State<MainPage> {
         await _performInitState();
       break;
 
+      case _State.permissionNeeded:
+        await _performPermissionNeeded();
+      break;
+
       case _State.requestPermissions:
+        await _performRequestPermissions();
       break;
 
       case _State.waitForScan:
@@ -114,17 +149,33 @@ class _MainPageState extends State<MainPage> {
     androidInfo = await deviceInfo.androidInfo;
 
     for (var p in _requiredPermissions) {
-      _permissionStatuses[p] = await p.status;
+      await p.refreshStatus();
     }
 
     if (_permissionsRequired){
-      await _switchToState( _State.requestPermissions, '' );
+      await _switchToState( _State.permissionNeeded, '' );
     }else{
       await _switchToState( _State.waitForScan, '' );
     }
 
   }
   
+  Future<void> _performPermissionNeeded() async {
+    setState(() {
+      _isBusy = false;
+      _busyProgress = null;
+      _message = 'Permissions Needed';
+    });
+  }
+
+  Future<void> _performRequestPermissions() async {
+    for (var p in _requiredPermissions) {
+      await p.request();
+    }
+
+    await _switchToState(_State.init, '');
+  }
+
   Future<void> _performWaitForScan() async {
     setState(() {
       _isBusy = false;
@@ -388,20 +439,43 @@ class _MainPageState extends State<MainPage> {
                   child: Text( _message, textAlign: TextAlign.center, ),
                 )
               ,
-              const SizedBox( height: 16, ),
+              const SizedBox( height: 8, ),
 
-              if ( _state == _State.requestPermissions )
-        
+              if ( _state == _State.permissionNeeded )
                 Column(
+                  crossAxisAlignment: CrossAxisAlignment.center,
                   children: [
+                    ..._requiredPermissions.map( (e) => Padding(
+                      padding: const EdgeInsets.all(8.0),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          if (e.status?.isGranted == true)
+                            const Icon(Icons.check_circle_outline, color: Colors.green,)
+                          else 
+                            const Icon(Icons.highlight_off, color: Colors.red,)
+                          ,
+                          const SizedBox(width: 8,),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text( e.name, style: const TextStyle(fontWeight: FontWeight.bold), ),
+                              Text( e.reason, textScaler: const TextScaler.linear(0.8), ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),),
+                    const SizedBox(height: 32,),
                     ElevatedButton(
-                      onPressed: _requestPermissions,
+                      onPressed: () async => await _switchToState( _State.requestPermissions, '' ),
                       child: const Text( 'Request Permissions' )
                     )
                   ],
                 )
-              
-              else if ( _state == _State.waitForScan )
+              ,
+
+              if ( _state == _State.waitForScan )
                 ElevatedButton(
                   onPressed: () async => await _switchToState( _State.processScan, '' ),
                   child: const Text( 'Scan QR code' )
@@ -417,21 +491,7 @@ class _MainPageState extends State<MainPage> {
       ),
     );
   }
-  
-  Future<void> _requestPermissions() async {
 
-    for (var p in _requiredPermissions) {
-      await p.request();
-    }
-
-    for (var p in _requiredPermissions) {
-      _permissionStatuses[p] = await p.status;
-    }
-
-    setState(() { });
-  }
-
-  
   String _buildFinalDownloadUrl(String url) {
     if ( url == _kSimulateScanUrl ){
       debugPrint('simulate scan');
