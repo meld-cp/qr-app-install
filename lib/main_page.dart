@@ -319,7 +319,10 @@ class _MainPageState extends State<MainPage> {
           child: Column(
             children: [
               Text('QR App Installer', style: Theme.of(context).textTheme.titleLarge,),
-              const Icon(Icons.qr_code_2, size: 128, color: Colors.black38),
+              const Padding(
+                padding: EdgeInsets.all(16),
+                child: Image( width: 128, image: AssetImage('assets/icon.png') ),
+              ),
               const SizedBox(height: 32,),
 
               Text('URL Parameters',  style: Theme.of(context).textTheme.titleSmall,),
